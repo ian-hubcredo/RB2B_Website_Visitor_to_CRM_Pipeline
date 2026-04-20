@@ -1,0 +1,589 @@
+{
+  "name": "RB2B FLOW 2",
+  "nodes": [
+    {
+      "parameters": {
+        "trigger": [
+          "message"
+        ],
+        "channelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "C0712SMCKRN",
+          "cachedResultName": "website-visitors"
+        },
+        "options": {}
+      },
+      "id": "c484d1bb-489b-45be-a218-3a5be9c2a467",
+      "name": "RB2B New Message",
+      "type": "n8n-nodes-base.slackTrigger",
+      "position": [
+        784,
+        304
+      ],
+      "webhookId": "<REDACTED_WEBHOOK_ID>",
+      "typeVersion": 1,
+      "credentials": {
+        "slackApi": {
+          "id": "<REDACTED_CREDENTIAL_ID>", "name": "<REDACTED_CREDENTIAL_NAME>"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function splitName(fullName) {\n  if (!fullName || typeof fullName !== 'string') {\n    return { firstName: '', lastName: '' };\n  }\n  const parts = fullName.trim().split(/\\s+/);\n  if (parts.length === 0) {\n    return { firstName: '', lastName: '' };\n  }\n  const firstName = parts[0];\n  const lastName = parts.length > 1 ? parts.slice(1).join(' ') : '';\n  return { firstName, lastName, fullName };\n}\n\nfunction extractDataFromSlackMessage(messageData) {\n  // Get the message text\n  const messageText = messageData.text || '';\n  \n  // Initialize extracted data\n  let fullName = '';\n  let linkedin = '';\n  let title = '';\n  let company = '';\n  let email = '';\n  let location = '';\n  let urls = [];\n  \n  // Extract LinkedIn URL from rich text blocks if available\n  if (messageData.blocks && messageData.blocks.length > 0) {\n    for (const block of messageData.blocks) {\n      if (block.type === 'rich_text' && block.elements) {\n        for (const element of block.elements) {\n          if (element.type === 'rich_text_section' && element.elements) {\n            for (const richElement of element.elements) {\n              if (richElement.type === 'link' && richElement.url && richElement.url.includes('linkedin.com')) {\n                linkedin = richElement.url;\n                break;\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n  \n  // Helper function to clean up Slack link format and extract display text\n  function cleanSlackLinks(text) {\n    // Replace <URL|Display_Text> with just Display_Text\n    return text.replace(/<[^|>]+\\|([^>]+)>/g, '$1')\n               .replace(/&amp;/g, '&')\n               .trim();\n  }\n  \n  // Function to extract URLs from text\n  function extractUrlsFromText(text) {\n    const urls = [];\n    // Match URLs in Slack format <URL|Display_Text> or <URL>\n    const urlMatches = text.match(/<(https?:\\/\\/[^|>]+)/g);\n    if (urlMatches) {\n      urlMatches.forEach(match => {\n        try {\n          const url = match.replace('<', '');\n          if (!urls.includes(url)) {\n            urls.push(url);\n          }\n        } catch (e) {\n          // Invalid URL, skip\n        }\n      });\n    }\n    return urls;\n  }\n  \n  // Function to extract all URLs from rich text blocks\n  function extractUrlsFromBlocks(blocks) {\n    const allUrls = [];\n    \n    if (!blocks || !Array.isArray(blocks)) return allUrls;\n    \n    for (const block of blocks) {\n      if (block.type === 'rich_text' && block.elements) {\n        for (const element of block.elements) {\n          if (element.type === 'rich_text_section' && element.elements) {\n            for (const richElement of element.elements) {\n              if (richElement.type === 'link' && richElement.url) {\n                const url = richElement.url;\n                if (!allUrls.includes(url)) {\n                  allUrls.push(url);\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    return allUrls;\n  }\n  \n  // Parse the text content using regex patterns\n  const nameMatch = messageText.match(/\\*Name\\*:\\s*([^\\n]+)/);\n  if (nameMatch) {\n    fullName = nameMatch[1].trim();\n  }\n  \n  const titleMatch = messageText.match(/\\*Title\\*:\\s*([^\\n]+)/);\n  if (titleMatch) {\n    title = cleanSlackLinks(titleMatch[1]);\n  }\n  \n  const companyMatch = messageText.match(/\\*Company\\*:\\s*([^\\n]+)/);\n  if (companyMatch) {\n    const rawCompany = companyMatch[1];\n    company = cleanSlackLinks(rawCompany);\n    // Extract URLs from company field\n    const textUrls = extractUrlsFromText(rawCompany);\n    urls = textUrls;\n  }\n  \n  // Extract location\n  const locationMatch = messageText.match(/\\*Location\\*:\\s*([^\\n]+)/);\n  if (locationMatch) {\n    location = cleanSlackLinks(locationMatch[1]);\n  }\n  \n  // Extract email address\n  const emailMatch = messageText.match(/\\*Email\\*:\\s*([^\\n\\s]+)/);\n  if (emailMatch) {\n    email = emailMatch[1].trim();\n  }\n  \n  // Alternative email extraction patterns\n  if (!email) {\n    // Try to find email in the general text\n    const generalEmailMatch = messageText.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);\n    if (generalEmailMatch) {\n      email = generalEmailMatch[1];\n    }\n  }\n  \n  // Extract all URLs from rich text blocks\n  const blockUrls = extractUrlsFromBlocks(messageData.blocks);\n  \n  // Combine all URLs\n  const allUrls = [...new Set([...urls, ...blockUrls])];\n  \n  // If LinkedIn not found in blocks, try to extract from text\n  if (!linkedin) {\n    const linkedinMatch = messageText.match(/\\*LinkedIn\\*:\\s*<([^>]+)>/);\n    if (linkedinMatch) {\n      linkedin = linkedinMatch[1];\n    }\n  }\n  \n  return {\n    fullName,\n    linkedin,\n    title,\n    company,\n    email,\n    location,\n    urls: allUrls\n  };\n}\n\nfunction extractDomainsFromUrls(urls) {\n  console.log('URLs received:', urls);\n  \n  if (!urls || !Array.isArray(urls)) {\n    console.log('No URLs or not an array');\n    return [];\n  }\n  \n  const domains = [];\n  \n  urls.forEach(url => {\n    console.log('Processing URL:', url);\n    \n    // Skip LinkedIn URLs\n    if (url.includes('linkedin.com')) {\n      console.log('Skipping LinkedIn URL:', url);\n      return;\n    }\n    \n    try {\n      // Simple regex approach as backup\n      const domainMatch = url.match(/https?:\\/\\/(www\\.)?([^\\/]+)/);\n      if (domainMatch && domainMatch[2]) {\n        let domain = domainMatch[2];\n        console.log('Domain extracted via regex:', domain);\n        \n        if (domain && !domains.includes(domain)) {\n          domains.push(domain);\n          console.log('Added domain:', domain);\n        }\n      } else {\n        console.log('No domain match found for:', url);\n      }\n    } catch (e) {\n      console.log(`Error processing URL: ${url}`, e.message);\n    }\n  });\n  \n  console.log('Final domains:', domains);\n  return domains;\n}\n\n// Main execution\nconst inputData = $input.first().json;\nconst extractedData = extractDataFromSlackMessage(inputData);\nconst names = splitName(extractedData.fullName);\n\n// Extract domains from URLs for Attio\nconst domains = extractDomainsFromUrls(extractedData.urls);\n\nreturn [\n  {\n    json: {\n      full_name: names.fullName,\n      first_name: names.firstName,\n      last_name: names.lastName,\n      linkedin: extractedData.linkedin,\n      title: extractedData.title,\n      company: extractedData.company,\n      email: extractedData.email,\n      location: extractedData.location,\n      urls: extractedData.urls,\n      domains: domains,\n      primary_domain: domains.length > 0 ? domains[0] : null\n    }\n  }\n];"
+      },
+      "id": "3e58a038-f7fc-4804-ab02-c52c09168c25",
+      "name": "Cleanup Data",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1152,
+        304
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/people/records/query",
+        "authentication": "genericCredentialType",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"email_addresses\": {\n      \"$contains\": \"{{ $('Cleanup Data').first().json.email }}\"\n    }\n  },\n  \"page\": {\n    \"size\": 1\n  }\n}",
+        "options": {}
+      },
+      "id": "c734031d-1c99-4d67-a587-9702449836c7",
+      "name": "Get Person",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1520,
+        304
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "content": "## 🎯 Sync RB2B Website Visitors to Attio CRM with Deal Creation\n\n### This n8n template automatically captures website visitors identified by RB2B and syncs them to your Attio CRM with intelligent deal management.\n\nPerfect for sales teams who want to turn anonymous website traffic into qualified leads without manual data entry!\n\n### How it works\n* RB2B sends website visitor notifications to your designated Slack channel\n* The workflow extracts visitor details (name, email, company, LinkedIn, location) from Slack messages\n* It checks if the person already exists in Attio CRM to prevent duplicates\n* Creates new contacts with complete visitor information or updates existing records\n* Automatically creates sales deals for new leads or updates existing deal stages\n* Tags all leads with \"RB2B Website Visitor\" source for easy identification\n\n### How to use\n* Configure RB2B to send visitor notifications to a dedicated Slack channel\n* Set up your Slack bot credentials and select the RB2B channel\n* Add your Attio API credentials with proper permissions\n* Customize deal stages, naming conventions, and field mappings as needed\n* The workflow handles both new and existing contacts intelligently\n\n### Requirements\n* RB2B account with Slack integration enabled\n* Attio CRM account with API access\n* Slack workspace with bot permissions\n\n### Good to know\n* The workflow prevents duplicate contacts by checking email addresses\n* Deal creation logic differs for new vs existing contacts\n* All RB2B leads are tagged with source tracking for follow-up\n\nHappy Lead Converting!",
+        "height": 900,
+        "width": 640
+      },
+      "id": "dfbd49d2-b941-4304-9e97-29c3246e38d8",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        0,
+        0
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/people/records",
+        "authentication": "genericCredentialType",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"data\": {\n    \"values\": {\n      \"name\": [\n        {\n          \"first_name\": \"{{ $('Cleanup Data').item.json.first_name }}\",\n          \"last_name\": \"{{ $('Cleanup Data').item.json.last_name }}\",\n          \"full_name\": \"{{ $('Cleanup Data').item.json.full_name }}\"\n        }\n      ],\n      \"email_addresses\": [\"{{ $('Cleanup Data').item.json.email }}\"]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "cdffc155-e297-482f-b6a6-84de7125127b",
+      "name": "Create Person",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2208,
+        512
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/deals/records",
+        "authentication": "genericCredentialType",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"data\": {\n    \"values\": {\n      \"name\": \"Deal with {{ $json.data.values.name[0].full_name }}\",\n      \"stage\": \"RB2B Website Visitor\",\n      \"value\": 0,\n      \"owner\": \"<REDACTED_EMAIL>\",\n      \"associated_people\": [\n        {\n          \"target_object\": \"people\",\n          \"target_record_id\": \"{{ $json.data.id.record_id }}\"\n        }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "6ca586a5-72b5-4235-b370-d1610436962f",
+      "name": "Create Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2432,
+        512
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/deals/records",
+        "authentication": "genericCredentialType",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"data\": {\n    \"values\": {\n      \"name\": \"Deal with {{ $('Get Person').item.json.data[0].values.name[0].full_name }}\",\n      \"stage\": \"RB2B Website Visitor\",\n      \"value\": 0,\n      \"owner\": \"<REDACTED_EMAIL>\",\n      \"associated_people\": [\n        {\n          \"target_object\": \"people\",\n          \"target_record_id\": \"{{ $('Get Person').item.json.data[0].id.record_id }}\"\n        }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "d88b5f77-087f-44a1-a647-da19d1ab77d0",
+      "name": "Create Associated Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2528,
+        320
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.attio.com/v2/objects/deals/records/{{ $('Get Person').item.json.data[0].values.associated_deals[0].target_record_id }}",
+        "authentication": "genericCredentialType",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"data\": {\n    \"values\": {\n      \"stage\": \"RB2B Website Visitor\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "e5d78dd8-43cc-4b94-b4bd-3c2860e57c74",
+      "name": "Update Deal Stage",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2384,
+        128
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "d838154e-4857-4180-b2d4-30e021e95e39",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.data && $json.data.length > 0 }}",
+              "rightValue": "0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5fd7c979-ae28-4578-af9f-347553c47ae5",
+      "name": "Person Exists?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1840,
+        304
+      ],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "d99a0062-cfe0-45bf-9475-7d250786ac00",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    },
+                    "leftValue": "={{ $json.data[0].values.associated_deals.length > 0 }}",
+                    "rightValue": ""
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Already has associated deal"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "07564302-add4-4389-9c8b-0a1d8e3b90a1",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    },
+                    "leftValue": "={{ $json.data[0].values.associated_deals.length === 0 }}",
+                    "rightValue": ""
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "No associated deal"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "f1307730-7fe8-4a38-8086-892e61833d53",
+      "name": "Switch",
+      "type": "n8n-nodes-base.switch",
+      "position": [
+        2160,
+        224
+      ],
+      "typeVersion": 3.2
+    },
+    {
+      "parameters": {
+        "content": "## 1. RB2B Slack Trigger\n[Read more about the Slack Trigger node](https://docs.n8n.io/integrations/builtin/trigger-nodes/n8n-nodes-base.slacktrigger)\n\nMonitors your designated Slack channel for new website visitor notifications from RB2B. Each notification contains structured visitor data including contact details and website activity.",
+        "height": 240,
+        "width": 300,
+        "color": 7
+      },
+      "id": "e7ae475e-e585-41b6-b941-7fd8004866c1",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        720,
+        32
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 2. Parse RB2B Visitor Data\n[Read more about the Code node](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.code)\n\nExtracts and structures visitor information from RB2B Slack messages. Handles name splitting, URL extraction, domain parsing, and data cleaning to prepare for CRM import.",
+        "height": 240,
+        "width": 300,
+        "color": 7
+      },
+      "id": "07dff47b-6327-4729-af39-6475e9df850c",
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1088,
+        32
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 3. Check if Person Exists in Attio\n[Read more about the HTTP Request node](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.httprequest)\n\nSearches Attio CRM using the visitor's email address to prevent duplicate contact creation. This ensures data integrity and proper lead management.",
+        "height": 240,
+        "width": 300,
+        "color": 7
+      },
+      "id": "db455e9c-d863-425b-b3b2-12004f03f8b4",
+      "name": "Sticky Note3",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1440,
+        32
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 4. Intelligent Deal Management\n[Read more about the Switch node](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.switch)\n\nSmart logic that handles deal creation differently based on contact status:\n- New contacts: Creates person record first, then associated deal\n- Existing contacts: Checks for existing deals and either updates or creates new ones",
+        "height": 300,
+        "width": 300,
+        "color": 7
+      },
+      "id": "47b5302d-b859-4831-854a-df1079b27ad1",
+      "name": "Sticky Note4",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1744,
+        480
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 5. Create/Update Attio Records\n[Read more about Attio API](https://developers.attio.com/)\n\nFinal step that creates new contact records and deals in Attio CRM. All RB2B leads are tagged with source information and assigned appropriate deal stages for sales follow-up.",
+        "height": 180,
+        "width": 440,
+        "color": 7
+      },
+      "id": "4b49d90f-680a-48f9-8e1a-4a690269f31f",
+      "name": "Sticky Note5",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2752,
+        192
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "### Setup Required!\nBefore activating this workflow:\n1. Configure RB2B → Slack integration\n2. Add Slack bot credentials to trigger node\n3. Add Attio API credentials to all HTTP nodes\n4. Select correct Slack channel in trigger\n5. Test with sample RB2B notification\n\nMissing credentials will cause workflow failures!",
+        "height": 260,
+        "width": 460,
+        "color": 3
+      },
+      "id": "2a9b4d60-6699-4431-9af5-aaf29f279196",
+      "name": "Sticky Note6",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        768,
+        560
+      ],
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Update Deal Stage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Associated Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Person": {
+      "main": [
+        [
+          {
+            "node": "Person Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cleanup Data": {
+      "main": [
+        [
+          {
+            "node": "Get Person",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Person": {
+      "main": [
+        [
+          {
+            "node": "Create Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Person Exists?": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Person",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RB2B New Message": {
+      "main": [
+        [
+          {
+            "node": "Cleanup Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {
+    "Cleanup Data": [
+      {
+        "json": {
+          "urls": [
+            "<REDACTED_LINKEDIN_URL>",
+            "https://www.techcorp.com/"
+          ],
+          "email": "<REDACTED_EMAIL>",
+          "title": "Senior Developer",
+          "company": "TechCorp Industries",
+          "domains": [
+            "techcorp.com"
+          ],
+          "linkedin": "<REDACTED_LINKEDIN_URL>",
+          "location": "San Francisco, CA",
+          "full_name": "<REDACTED_NAME>",
+          "last_name": "Smith",
+          "first_name": "John",
+          "primary_domain": "techcorp.com"
+        }
+      }
+    ],
+    "RB2B New Message": [
+      {
+        "json": {
+          "ts": "1748900000.123456",
+          "team": "T02EXAMPLE789",
+          "text": "*Name*: John Smith\n*Title*: Senior Developer\n*Company*: TechCorp Industries\n*Email*: <REDACTED_EMAIL>\n*LinkedIn*: <<REDACTED_LINKEDIN_URL>>\n*Location*: San Francisco, CA\n\nFirst identified visiting *<https://www.techcorp.com/>* on *August 5, 2025 at 10:30AM PST*",
+          "type": "message",
+          "user": "U02DUMMY456",
+          "blocks": [
+            {
+              "type": "rich_text",
+              "block_id": "Xy9Zw",
+              "elements": [
+                {
+                  "type": "rich_text_section",
+                  "elements": [
+                    {
+                      "text": "Name",
+                      "type": "text",
+                      "style": {
+                        "bold": true
+                      }
+                    },
+                    {
+                      "text": ": John Smith\n",
+                      "type": "text"
+                    },
+                    {
+                      "text": "Title",
+                      "type": "text",
+                      "style": {
+                        "bold": true
+                      }
+                    },
+                    {
+                      "text": ": Senior Developer\n",
+                      "type": "text"
+                    },
+                    {
+                      "text": "Company",
+                      "type": "text",
+                      "style": {
+                        "bold": true
+                      }
+                    },
+                    {
+                      "text": ": TechCorp Industries\n",
+                      "type": "text"
+                    },
+                    {
+                      "text": "Email",
+                      "type": "text",
+                      "style": {
+                        "bold": true
+                      }
+                    },
+                    {
+                      "text": ": <REDACTED_EMAIL>\n",
+                      "type": "text"
+                    },
+                    {
+                      "text": "LinkedIn",
+                      "type": "text",
+                      "style": {
+                        "bold": true
+                      }
+                    },
+                    {
+                      "text": ": ",
+                      "type": "text"
+                    },
+                    {
+                      "url": "<REDACTED_LINKEDIN_URL>",
+                      "type": "link"
+                    },
+                    {
+                      "text": "\n",
+                      "type": "text"
+                    },
+                    {
+                      "text": "Location",
+                      "type": "text",
+                      "style": {
+                        "bold": true
+                      }
+                    },
+                    {
+                      "text": ": San Francisco, CA\n\nFirst identified visiting ",
+                      "type": "text"
+                    },
+                    {
+                      "url": "https://www.techcorp.com/",
+                      "text": "https://www.techcorp.com/",
+                      "type": "link",
+                      "style": {
+                        "bold": true
+                      }
+                    },
+                    {
+                      "text": " on ",
+                      "type": "text"
+                    },
+                    {
+                      "text": "August 5, 2025 at 10:30AM PST",
+                      "type": "text",
+                      "style": {
+                        "bold": true
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "channel": "C09DUMMY123",
+          "event_ts": "1748900000.123456",
+          "channel_type": "channel",
+          "client_msg_id": "f9e8d7c6-b5a4-3210-9876-54321fedcba0"
+        }
+      }
+    ]
+  },
+  "triggerCount": 0,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
